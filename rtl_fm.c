@@ -48,9 +48,12 @@
  *       fix oversampling
  */
 
+#define _GNU_SOURCE
+
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -70,10 +73,10 @@
 
 #include <math.h>
 #include <pthread.h>
-#include <libusb.h>
+// #include <libusb.h>
 
-#include "rtl-sdr.h"
-#include "convenience/convenience.h"
+// #include "rtl-sdr.h"
+// #include "convenience/convenience.h"
 
 #define DEFAULT_SAMPLE_RATE		24000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
@@ -96,7 +99,7 @@ struct dongle_state
 {
 	int      exit_flag;
 	pthread_t thread;
-	rtlsdr_dev_t *dev;
+	// rtlsdr_dev_t *dev;
 	int      dev_index;
 	uint32_t freq;
 	uint32_t rate;
@@ -249,7 +252,7 @@ static void sighandler(int signum)
 	signal(SIGPIPE, SIG_IGN);
 	fprintf(stderr, "Signal caught, exiting!\n");
 	do_exit = 1;
-	rtlsdr_cancel_async(dongle.dev);
+	// rtlsdr_cancel_async(dongle.dev);
 }
 #endif
 
@@ -515,6 +518,83 @@ int polar_disc_lut(int ar, int aj, int br, int bj)
 	}
 
 	return 0;
+}
+
+double atofs(char *s)
+/* standard suffixes */
+{
+	char last;
+	int len;
+	double suff = 1.0;
+	len = strlen(s);
+	last = s[len-1];
+	s[len-1] = '\0';
+	switch (last) {
+		case 'g':
+		case 'G':
+			suff *= 1e3;
+			/* fall-through */
+		case 'm':
+		case 'M':
+			suff *= 1e3;
+			/* fall-through */
+		case 'k':
+		case 'K':
+			suff *= 1e3;
+			suff *= atof(s);
+			s[len-1] = last;
+			return suff;
+	}
+	s[len-1] = last;
+	return atof(s);
+}
+
+double atoft(char *s)
+/* time suffixes, returns seconds */
+{
+	char last;
+	int len;
+	double suff = 1.0;
+	len = strlen(s);
+	last = s[len-1];
+	s[len-1] = '\0';
+	switch (last) {
+		case 'h':
+		case 'H':
+			suff *= 60;
+			/* fall-through */
+		case 'm':
+		case 'M':
+			suff *= 60;
+			/* fall-through */
+		case 's':
+		case 'S':
+			suff *= atof(s);
+			s[len-1] = last;
+			return suff;
+	}
+	s[len-1] = last;
+	return atof(s);
+}
+
+double atofp(char *s)
+/* percent suffixes */
+{
+	char last;
+	int len;
+	double suff = 1.0;
+	len = strlen(s);
+	last = s[len-1];
+	s[len-1] = '\0';
+	switch (last) {
+		case '%':
+			suff *= 0.01;
+			suff *= atof(s);
+			s[len-1] = last;
+			return suff;
+	}
+	s[len-1] = last;
+	return atof(s);
 }
 
 void fm_demod(struct demod_state *fm)
@@ -809,7 +889,7 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 static void *dongle_thread_fn(void *arg)
 {
 	struct dongle_state *s = arg;
-	rtlsdr_read_async(s->dev, rtlsdr_callback, s, 0, s->buf_len);
+	// rtlsdr_read_async(s->dev, rtlsdr_callback, s, 0, s->buf_len);
 	return 0;
 }
 
@@ -893,20 +973,20 @@ static void *controller_thread_fn(void *arg)
 
 	/* set up primary channel */
 	optimal_settings(s->freqs[0], demod.rate_in);
-	if (dongle.direct_sampling) {
-		verbose_direct_sampling(dongle.dev, dongle.direct_sampling);}
-	if (dongle.offset_tuning) {
-		verbose_offset_tuning(dongle.dev);}
+	// if (dongle.direct_sampling) {
+	// 	verbose_direct_sampling(dongle.dev, dongle.direct_sampling);}
+	// if (dongle.offset_tuning) {
+	// 	verbose_offset_tuning(dongle.dev);}
 
 	/* Set the frequency */
-	verbose_set_frequency(dongle.dev, dongle.freq);
+	// verbose_set_frequency(dongle.dev, dongle.freq);
 	fprintf(stderr, "Oversampling input by: %ix.\n", demod.downsample);
 	fprintf(stderr, "Oversampling output by: %ix.\n", demod.post_downsample);
 	fprintf(stderr, "Buffer size: %0.2fms\n",
 		1000 * 0.5 * (float)ACTUAL_BUF_LENGTH / (float)dongle.rate);
 
 	/* Set the sample rate */
-	verbose_set_sample_rate(dongle.dev, dongle.rate);
+	// verbose_set_sample_rate(dongle.dev, dongle.rate);
 	fprintf(stderr, "Output at %u Hz.\n", demod.rate_in/demod.post_downsample);
 
 	while (!do_exit) {
@@ -916,7 +996,7 @@ static void *controller_thread_fn(void *arg)
 		/* hacky hopping */
 		s->freq_now = (s->freq_now + 1) % s->freq_len;
 		optimal_settings(s->freqs[s->freq_now], demod.rate_in);
-		rtlsdr_set_center_freq(dongle.dev, dongle.freq);
+		// rtlsdr_set_center_freq(dongle.dev, dongle.freq);
 		dongle.mute = BUFFER_DUMP;
 	}
 	return 0;
@@ -1067,7 +1147,7 @@ int main(int argc, char **argv)
 	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:hT")) != -1) {
 		switch (opt) {
 		case 'd':
-			dongle.dev_index = verbose_device_search(optarg);
+			dongle.dev_index = 0; // verbose_device_search(optarg);
 			dev_given = 1;
 			break;
 		case 'f':
@@ -1191,14 +1271,14 @@ int main(int argc, char **argv)
 	ACTUAL_BUF_LENGTH = lcm_post[demod.post_downsample] * DEFAULT_BUF_LENGTH;
 
 	if (!dev_given) {
-		dongle.dev_index = verbose_device_search("0");
+		dongle.dev_index = 0; // verbose_device_search("0");
 	}
 
 	if (dongle.dev_index < 0) {
 		exit(1);
 	}
 
-	r = rtlsdr_open(&dongle.dev, (uint32_t)dongle.dev_index);
+	r = 0; // rtlsdr_open(&dongle.dev, (uint32_t)dongle.dev_index);
 	if (r < 0) {
 		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dongle.dev_index);
 		exit(1);
@@ -1220,18 +1300,18 @@ int main(int argc, char **argv)
 	}
 
 	/* Set the tuner gain */
-	if (dongle.gain == AUTO_GAIN) {
-		verbose_auto_gain(dongle.dev);
-	} else {
-		dongle.gain = nearest_gain(dongle.dev, dongle.gain);
-		verbose_gain_set(dongle.dev, dongle.gain);
-	}
+	// if (dongle.gain == AUTO_GAIN) {
+	// 	verbose_auto_gain(dongle.dev);
+	// } else {
+	// 	dongle.gain = nearest_gain(dongle.dev, dongle.gain);
+	// 	verbose_gain_set(dongle.dev, dongle.gain);
+	// }
 
-	rtlsdr_set_bias_tee(dongle.dev, enable_biastee);
+	// rtlsdr_set_bias_tee(dongle.dev, enable_biastee);
 	if (enable_biastee)
 		fprintf(stderr, "activated bias-T on GPIO PIN 0\n");
 
-	verbose_ppm_set(dongle.dev, dongle.ppm_error);
+	// verbose_ppm_set(dongle.dev, dongle.ppm_error);
 
 	if (strcmp(output.filename, "-") == 0) { /* Write samples to stdout */
 		output.file = stdout;
@@ -1249,7 +1329,7 @@ int main(int argc, char **argv)
 	//r = rtlsdr_set_testmode(dongle.dev, 1);
 
 	/* Reset endpoint before we start reading from it (mandatory) */
-	verbose_reset_buffer(dongle.dev);
+	// verbose_reset_buffer(dongle.dev);
 
 	pthread_create(&controller.thread, NULL, controller_thread_fn, (void *)(&controller));
 	usleep(100000);
@@ -1266,7 +1346,7 @@ int main(int argc, char **argv)
 	else {
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
 
-	rtlsdr_cancel_async(dongle.dev);
+	// rtlsdr_cancel_async(dongle.dev);
 	pthread_join(dongle.thread, NULL);
 	safe_cond_signal(&demod.ready, &demod.ready_m);
 	pthread_join(demod.thread, NULL);
@@ -1283,7 +1363,7 @@ int main(int argc, char **argv)
 	if (output.file != stdout) {
 		fclose(output.file);}
 
-	rtlsdr_close(dongle.dev);
+	// rtlsdr_close(dongle.dev);
 	return r >= 0 ? r : -r;
 }
 
