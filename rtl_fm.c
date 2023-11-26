@@ -77,6 +77,7 @@
 
 // #include "rtl-sdr.h"
 // #include "convenience/convenience.h"
+#include "inc/sndfile.h"
 
 #define DEFAULT_SAMPLE_RATE		24000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
@@ -94,6 +95,17 @@ static int ACTUAL_BUF_LENGTH;
 static int *atan_lut = NULL;
 static int atan_lut_size = 131072; /* 512 KB */
 static int atan_lut_coef = 8;
+
+struct file_state
+{
+	pthread_t thread;
+	SNDFILE *sndfp;
+	SF_INFO  sf_info;
+	uint32_t freq;
+	int16_t  buf16[MAXIMUM_BUF_LENGTH];
+	uint32_t buf_len;
+	struct demod_state *demod_target;
+};
 
 struct dongle_state
 {
@@ -177,6 +189,7 @@ struct controller_state
 };
 
 // multiple of these, eventually
+struct file_state wavfile;
 struct dongle_state dongle;
 struct demod_state demod;
 struct output_state output;
@@ -893,6 +906,28 @@ static void *dongle_thread_fn(void *arg)
 	return 0;
 }
 
+static void *file_thread_fn(void *arg)
+{
+	int i = 0;
+	struct file_state *s = arg;
+	struct demod_state *d = s->demod_target;
+	sf_count_t len = 0;
+
+	while((len = sf_readf_short(s->sndfp, (short*)s->buf16, DEFAULT_BUF_LENGTH)) != 0) 
+	{
+		pthread_rwlock_wrlock(&d->rw);
+		memcpy(d->lowpassed, s->buf16, 2*len);
+		d->lp_len = len;
+		pthread_rwlock_unlock(&d->rw);
+		safe_cond_signal(&d->ready, &d->ready_m);
+		// printf("%ld\n",len);
+		// printf("%d %d\n",s->buf16[0],s->buf16[1]);
+		// s->buf16[0] = s->buf16[1] = 0;
+	}
+
+	return 0;
+}
+
 static void *demod_thread_fn(void *arg)
 {
 	struct demod_state *d = arg;
@@ -1035,6 +1070,11 @@ void frequency_range(struct controller_state *s, char *arg)
 	step[-1] = ':';
 }
 
+void file_init(struct file_state *s)
+{
+	s->demod_target = &demod;
+}
+
 void dongle_init(struct dongle_state *s)
 {
 	s->rate = DEFAULT_SAMPLE_RATE;
@@ -1128,6 +1168,15 @@ void sanity_checks(void)
 		exit(1);
 	}
 
+	if (wavfile.sndfp == NULL) {
+		fprintf(stderr, "Please specify a valid input WAV file.\n");
+		exit(1);
+	}
+
+	printf("Sample rate: %d\n", wavfile.sf_info.samplerate);
+	printf("Channels: %d\n",    wavfile.sf_info.channels);
+	printf("Format: %08x\n",    wavfile.sf_info.format);
+
 }
 
 int main(int argc, char **argv)
@@ -1139,12 +1188,13 @@ int main(int argc, char **argv)
 	int dev_given = 0;
 	int custom_ppm = 0;
     int enable_biastee = 0;
+	file_init(&wavfile);
 	dongle_init(&dongle);
 	demod_init(&demod);
 	output_init(&output);
 	controller_init(&controller);
 
-	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:hT")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:w:E:F:A:M:hT")) != -1) {
 		switch (opt) {
 		case 'd':
 			dongle.dev_index = 0; // verbose_device_search(optarg);
@@ -1160,6 +1210,10 @@ int main(int argc, char **argv)
 				controller.freqs[controller.freq_len] = (uint32_t)atofs(optarg);
 				controller.freq_len++;
 			}
+			break;
+		case 'w':
+			printf("Input WAV file %s\n", optarg);
+			wavfile.sndfp = sf_open(optarg, SFM_READ, &wavfile.sf_info);
 			break;
 		case 'g':
 			dongle.gain = (int)(atof(optarg) * 10);
@@ -1335,7 +1389,8 @@ int main(int argc, char **argv)
 	usleep(100000);
 	pthread_create(&output.thread, NULL, output_thread_fn, (void *)(&output));
 	pthread_create(&demod.thread, NULL, demod_thread_fn, (void *)(&demod));
-	pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *)(&dongle));
+	// pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *)(&dongle));
+	pthread_create(&wavfile.thread, NULL, file_thread_fn, (void *)(&wavfile));
 
 	while (!do_exit) {
 		usleep(100000);
@@ -1347,7 +1402,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
 
 	// rtlsdr_cancel_async(dongle.dev);
-	pthread_join(dongle.thread, NULL);
+	// pthread_join(dongle.thread, NULL);
+	pthread_join(wavfile.thread, NULL);
 	safe_cond_signal(&demod.ready, &demod.ready_m);
 	pthread_join(demod.thread, NULL);
 	safe_cond_signal(&output.ready, &output.ready_m);
@@ -1364,6 +1420,7 @@ int main(int argc, char **argv)
 		fclose(output.file);}
 
 	// rtlsdr_close(dongle.dev);
+	sf_close(wavfile.sndfp);
 	return r >= 0 ? r : -r;
 }
 
